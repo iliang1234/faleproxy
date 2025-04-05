@@ -18,14 +18,51 @@ describe('Integration Tests', () => {
     nock.enableNetConnect(/(localhost|127\.0\.0\.1):/);
     
     // Create a temporary test app file
-    await execAsync('cp app.js app.test.js');
-    await execAsync(`sed -i '' 's/const PORT = 3001/const PORT = ${TEST_PORT}/' app.test.js`);
+    try {
+      const fs = require('fs');
+      const path = require('path');
+      const appPath = path.resolve(process.cwd(), 'app.js');
+      const testAppPath = path.resolve(process.cwd(), 'app.test.js');
+      
+      console.log(`Reading app from: ${appPath}`);
+      const appContent = fs.readFileSync(appPath, 'utf8');
+      
+      // Check if PORT constant exists in the file
+      const portRegex = /const\s+PORT\s*=\s*\d+/;
+      if (!portRegex.test(appContent)) {
+        console.log('PORT constant not found in app.js, adding it');
+        const modifiedContent = appContent + `\n\nconst PORT = ${TEST_PORT};\n`;
+        fs.writeFileSync(testAppPath, modifiedContent);
+      } else {
+        const modifiedContent = appContent.replace(portRegex, `const PORT = ${TEST_PORT}`);
+        fs.writeFileSync(testAppPath, modifiedContent);
+      }
+      console.log(`Created test app at: ${testAppPath}`);
+    } catch (error) {
+      console.error('Error creating test app file:', error.message);
+      throw error;
+    }
     
     // Start the test server
-    server = require('child_process').spawn('node', ['app.test.js'], {
+    const path = require('path');
+    const testAppPath = path.resolve(process.cwd(), 'app.test.js');
+    console.log(`Starting test server with: ${testAppPath}`);
+    server = require('child_process').spawn('node', [testAppPath], {
       detached: true,
-      stdio: 'ignore'
+      stdio: ['ignore', 'pipe', 'pipe']
     });
+    
+    // Log any server output for debugging
+    if (server.stdout) {
+      server.stdout.on('data', (data) => {
+        console.log(`Server stdout: ${data}`);
+      });
+    }
+    if (server.stderr) {
+      server.stderr.on('data', (data) => {
+        console.error(`Server stderr: ${data}`);
+      });
+    }
     
     // Give the server time to start
     await new Promise(resolve => setTimeout(resolve, 2000));
@@ -33,17 +70,31 @@ describe('Integration Tests', () => {
 
   afterAll(async () => {
     // Kill the test server and clean up
-    if (server && server.pid) {
+    if (server) {
       try {
-        process.kill(-server.pid);
+        if (process.platform === 'win32') {
+          // Windows requires a different approach
+          require('child_process').execSync(`taskkill /pid ${server.pid} /T /F`);
+        } else {
+          // Unix-based systems
+          try {
+            process.kill(-server.pid);
+          } catch (e) {
+            // If group kill fails, try direct kill
+            process.kill(server.pid);
+          }
+        }
       } catch (error) {
-        console.log('Server process already terminated');
+        console.log('Server process already terminated or could not be killed:', error.message);
       }
     }
     try {
-      await execAsync('rm app.test.js');
+      const path = require('path');
+      const testAppPath = path.resolve(process.cwd(), 'app.test.js');
+      require('fs').unlinkSync(testAppPath);
+      console.log(`Removed test app at: ${testAppPath}`);
     } catch (error) {
-      console.log('Could not remove test file');
+      console.log('Could not remove test file:', error.message);
     }
     nock.cleanAll();
     nock.enableNetConnect();
@@ -55,10 +106,32 @@ describe('Integration Tests', () => {
       .get('/')
       .reply(200, sampleHtmlWithYale);
     
-    // Make a request to our proxy app
-    const response = await axios.post(`http://localhost:${TEST_PORT}/fetch`, {
-      url: 'https://example.com/'
-    });
+    // Make a request to our proxy app with retry logic
+    let response;
+    let retries = 3;
+    let lastError;
+    
+    while (retries > 0) {
+      try {
+        console.log(`Attempting to connect to test server at http://localhost:${TEST_PORT}/fetch`);
+        response = await axios.post(`http://localhost:${TEST_PORT}/fetch`, {
+          url: 'https://example.com/'
+        });
+        break; // Success, exit the loop
+      } catch (error) {
+        lastError = error;
+        console.log(`Connection attempt failed (${retries} retries left): ${error.message}`);
+        retries--;
+        if (retries > 0) {
+          // Wait before retrying
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+      }
+    }
+    
+    if (!response) {
+      throw new Error(`Failed to connect to test server after multiple attempts: ${lastError?.message}`);
+    }
     
     expect(response.status).toBe(200);
     expect(response.data.success).toBe(true);
