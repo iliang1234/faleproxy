@@ -67,7 +67,7 @@ jobs:
   deploy-preview:
     name: Deploy to Preview
     needs: test
-    if: github.ref != 'refs/heads/main' && github.ref != 'refs/heads/master'
+    if: success()
     runs-on: ubuntu-latest
     
     steps:
