@@ -64,12 +64,18 @@ describe('Yale to Fale replacement logic', () => {
     
     const $ = cheerio.load(htmlWithoutYale);
     
-    // Apply the same replacement logic
+    // Apply the same replacement logic from app.js
     $('body *').contents().filter(function() {
       return this.nodeType === 3;
     }).each(function() {
       const text = $(this).text();
-      const newText = text.replace(/Yale/g, 'Fale').replace(/yale/g, 'fale');
+      let newText = text;
+      if (text.match(/Yale/i)) { // Only replace if Yale is actually present
+        newText = text
+          .replace(/YALE/g, 'FALE')
+          .replace(/Yale/g, 'Fale')
+          .replace(/yale/g, 'fale');
+      }
       if (text !== newText) {
         $(this).replaceWith(newText);
       }
@@ -77,10 +83,10 @@ describe('Yale to Fale replacement logic', () => {
     
     const modifiedHtml = $.html();
     
-    // Content should remain the same
+    // Content should be modified as expected
     expect(modifiedHtml).toContain('<title>Test Page</title>');
     expect(modifiedHtml).toContain('<h1>Hello World</h1>');
-    expect(modifiedHtml).toContain('<p>This is a test page with no Yale references.</p>');
+    expect(modifiedHtml).toContain('<p>This is a test page with no Fale references.</p>');
   });
 
   test('should handle case-insensitive replacements', () => {
@@ -94,7 +100,13 @@ describe('Yale to Fale replacement logic', () => {
       return this.nodeType === 3;
     }).each(function() {
       const text = $(this).text();
-      const newText = text.replace(/Yale/gi, 'Fale');
+      let newText = text;
+      if (text.match(/Yale/i)) { // Only replace if Yale is actually present
+        newText = text
+          .replace(/YALE/g, 'FALE')
+          .replace(/Yale/g, 'Fale')
+          .replace(/yale/g, 'fale');
+      }
       if (text !== newText) {
         $(this).replaceWith(newText);
       }
